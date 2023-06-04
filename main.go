@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,26 +8,28 @@ import (
 	"strings"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/lanfix/kube-config-merger/internal"
 )
 
 type ConfigNode struct {
-	Name       string
-	Parameters interface{}
+    Name       string
+    Parameters interface{}
 }
 
 type ConfigGroup struct {
-    ClustersList   []ConfigNode
-    ContextsList   []ConfigNode
-    UsersList      []ConfigNode
+    ClustersList []ConfigNode
+    ContextsList []ConfigNode
+    UsersList    []ConfigNode
 
     // Источник конфигурации для последующего слияния
-    Source         string
+    Source string
 
     // Дополнительные параметры
     CurrentContext string
 
     // Может ли контент из этой группы быть перезаписан или удален во время мерджа
-    CanBeDeleted   bool
+    CanBeDeleted bool
 }
 
 type ConfigNodePermanent struct {
@@ -36,85 +37,65 @@ type ConfigNodePermanent struct {
     CanBeDeleted bool
 }
 
-type ArrayFlags []string
-
-func (i *ArrayFlags) String() string {
-    return ""
-}
-
-func (i *ArrayFlags) Set(value string) error {
-    *i = append(*i, value)
-
-    return nil
-}
-
-func CastInterfaceToMap(input interface{}) map[string]interface{} {
-    return input.(map[string]interface{})
-}
-
-func CastInterfaceToList(input interface{}) []interface{} {
-    return input.([]interface{})
-}
-
 func CollectConfigGroup(configFilePath string) (*ConfigGroup, error) {
     configGroup := ConfigGroup{Source: configFilePath}
-	kubeConfigContent, err := os.ReadFile(configGroup.Source)
+    kubeConfigContent, err := os.ReadFile(configGroup.Source)
 
     if err != nil {
         panic(err)
     }
 
     if !strings.Contains(string(kubeConfigContent), "apiVersion") {
-        return nil, errors.New(fmt.Sprintf("Skipping \"%s\", file does not contain apiVersion", configGroup.Source))
+        return nil, fmt.Errorf("skipping \"%s\", file does not contain apiVersion", configGroup.Source)
     }
 
     var kubeConfig interface{}
     err = yaml.Unmarshal(kubeConfigContent, &kubeConfig)
 
     if err != nil {
-        return nil, errors.New(fmt.Sprintf("Skipping \"%s\", invalid yaml syntax", configGroup.Source))
+        return nil, fmt.Errorf("skipping \"%s\", invalid yaml syntax", configGroup.Source)
     }
 
-    kubeConfigMapOfInterfaces := CastInterfaceToMap(kubeConfig)
-    
-    if kubeConfigMapOfInterfaces["apiVersion"].(string) != "v1" ||  kubeConfigMapOfInterfaces["kind"].(string) != "Config" {
-        return nil, errors.New(fmt.Sprintf("Skipping \"%s\", file is not a kubernetes access config", configGroup.Source))
+    kubeConfigMapOfInterfaces := internal.CastInterfaceToMap(kubeConfig)
+
+    if kubeConfigMapOfInterfaces["apiVersion"].(string) != "v1" || kubeConfigMapOfInterfaces["kind"].(string) != "Config" {
+        return nil, fmt.Errorf("skipping \"%s\", file is not a kubernetes access config", configGroup.Source)
     }
 
-    clusterInterfacesList := CastInterfaceToList(kubeConfigMapOfInterfaces["clusters"])
-    contextInterfacesList := CastInterfaceToList(kubeConfigMapOfInterfaces["contexts"])
-    userInterfacesList := CastInterfaceToList(kubeConfigMapOfInterfaces["users"])
+    clusterInterfacesList := internal.CastInterfaceToList(kubeConfigMapOfInterfaces["clusters"])
+    contextInterfacesList := internal.CastInterfaceToList(kubeConfigMapOfInterfaces["contexts"])
+    userInterfacesList := internal.CastInterfaceToList(kubeConfigMapOfInterfaces["users"])
 
     // Если нет какого-то из параметров (contexts, clusters, users), то нет смысла мерджить такой конфиг
     if len(clusterInterfacesList) == 0 || len(contextInterfacesList) == 0 || len(userInterfacesList) == 0 {
-        return nil, errors.New(fmt.Sprintf("Skipping \"%s\", config has not important fields", configGroup.Source))
+        return nil, fmt.Errorf("skipping \"%s\", config has not important fields", configGroup.Source)
     }
 
     configGroup.CurrentContext = kubeConfigMapOfInterfaces["current-context"].(string)
 
     for _, nodeInterface := range clusterInterfacesList {
-        node := CastInterfaceToMap(nodeInterface)
-        
+        node := internal.CastInterfaceToMap(nodeInterface)
+
         configGroup.ClustersList = append(configGroup.ClustersList, ConfigNode{
-            Name: node["name"].(string),
+            Name:       node["name"].(string),
             Parameters: node["cluster"],
         })
     }
 
     for _, nodeInterface := range contextInterfacesList {
-        node := CastInterfaceToMap(nodeInterface)
-        
+        node := internal.CastInterfaceToMap(nodeInterface)
+
         configGroup.ContextsList = append(configGroup.ContextsList, ConfigNode{
-            Name: node["name"].(string),
+            Name:       node["name"].(string),
             Parameters: node["context"],
         })
     }
 
     for _, nodeInterface := range userInterfacesList {
-        node := CastInterfaceToMap(nodeInterface)
-        
+        node := internal.CastInterfaceToMap(nodeInterface)
+
         configGroup.UsersList = append(configGroup.UsersList, ConfigNode{
-            Name: node["name"].(string),
+            Name:       node["name"].(string),
             Parameters: node["user"],
         })
     }
@@ -137,7 +118,7 @@ func RecursiveFilesByDirectory(directoryPath string) []string {
         }
 
         return nil
-    });
+    })
 
     return fileNames
 }
@@ -191,7 +172,7 @@ func UnwrapConfigNodesFromMap(configNodes map[string]ConfigNodePermanent) []Conf
     return output
 }
 
-func MergeConfigGroups(configGroups []ConfigGroup) (ConfigGroup) {
+func MergeConfigGroups(configGroups []ConfigGroup) ConfigGroup {
     mergedClustersMap := make(map[string]ConfigNodePermanent)
     mergedContextsMap := make(map[string]ConfigNodePermanent)
     mergedUsersMap := make(map[string]ConfigNodePermanent)
@@ -200,33 +181,33 @@ func MergeConfigGroups(configGroups []ConfigGroup) (ConfigGroup) {
     for _, configGroup := range configGroups {
         for _, configNode := range configGroup.ClustersList {
             if value, ok := mergedClustersMap[configNode.Name]; ok && !value.CanBeDeleted {
-                continue;
+                continue
             }
 
             mergedClustersMap[configNode.Name] = ConfigNodePermanent{
-                ConfigNode: configNode,
+                ConfigNode:   configNode,
                 CanBeDeleted: configGroup.CanBeDeleted,
             }
         }
-        
+
         for _, configNode := range configGroup.ContextsList {
             if value, ok := mergedContextsMap[configNode.Name]; ok && !value.CanBeDeleted {
-                continue;
+                continue
             }
 
             mergedContextsMap[configNode.Name] = ConfigNodePermanent{
-                ConfigNode: configNode,
+                ConfigNode:   configNode,
                 CanBeDeleted: configGroup.CanBeDeleted,
             }
         }
-        
+
         for _, configNode := range configGroup.UsersList {
             if value, ok := mergedUsersMap[configNode.Name]; ok && !value.CanBeDeleted {
-                continue;
+                continue
             }
 
             mergedUsersMap[configNode.Name] = ConfigNodePermanent{
-                ConfigNode: configNode,
+                ConfigNode:   configNode,
                 CanBeDeleted: configGroup.CanBeDeleted,
             }
         }
@@ -235,7 +216,7 @@ func MergeConfigGroups(configGroups []ConfigGroup) (ConfigGroup) {
     return ConfigGroup{
         ClustersList: UnwrapConfigNodesFromMap(mergedClustersMap),
         ContextsList: UnwrapConfigNodesFromMap(mergedContextsMap),
-        UsersList: UnwrapConfigNodesFromMap(mergedUsersMap),
+        UsersList:    UnwrapConfigNodesFromMap(mergedUsersMap),
     }
 }
 
@@ -247,14 +228,14 @@ func (configGroup *ConfigGroup) toYaml() ([]byte, error) {
     // TODO: Refactor
     for _, node := range configGroup.ClustersList {
         clustersList = append(clustersList, map[string]interface{}{
-            "name": node.Name,
+            "name":    node.Name,
             "cluster": node.Parameters,
         })
     }
 
     for _, node := range configGroup.ContextsList {
         contextsList = append(contextsList, map[string]interface{}{
-            "name": node.Name,
+            "name":    node.Name,
             "context": node.Parameters,
         })
     }
@@ -268,10 +249,10 @@ func (configGroup *ConfigGroup) toYaml() ([]byte, error) {
 
     configYamlStructure := map[string]interface{}{
         "apiVersion": "v1",
-        "kind": "Config",
-        "clusters": clustersList,
-        "contexts": contextsList,
-        "users": usersList,
+        "kind":       "Config",
+        "clusters":   clustersList,
+        "contexts":   contextsList,
+        "users":      usersList,
     }
 
     if configGroup.CurrentContext != "" {
@@ -302,8 +283,8 @@ func GetDefaultTarget() (string, error) {
 }
 
 func main() {
-    var directories ArrayFlags
-    var files ArrayFlags
+    var directories internal.ArrayFlags
+    var files internal.ArrayFlags
     var target string
 
     defaultTargetPath, err := GetDefaultTarget()
@@ -331,7 +312,7 @@ func main() {
 
     for _, filePath := range files {
         if _, err := os.Stat(filePath); err != nil {
-            fmt.Println(fmt.Sprintf("Skipping \"%s\", file does not exists", filePath))
+            fmt.Printf("skipping \"%s\", file does not exists\n", filePath)
             continue
         }
 
@@ -355,7 +336,7 @@ func main() {
     }
 
     // Отбираем только уникальные пути к файлам
-    validFilesToMerge = GetUniqueString(validFilesToMerge);
+    validFilesToMerge = GetUniqueString(validFilesToMerge)
 
     for _, configureFile := range validFilesToMerge {
         configGroup, err := CollectConfigGroup(configureFile)
@@ -368,20 +349,19 @@ func main() {
 
         configGroup.CanBeDeleted = true
 
-        if (configureFile == target) {
+        if configureFile == target {
             configGroup.CanBeDeleted = false
         }
 
         configGroups = append(configGroups, *configGroup)
     }
 
-
     if *varbose {
         DebugConfigGroups(configGroups)
     }
 
     mergedConfig := MergeConfigGroups(configGroups)
-    mergedConfig.CurrentContext = configGroups[len(configGroups) - 1].CurrentContext
+    mergedConfig.CurrentContext = configGroups[len(configGroups)-1].CurrentContext
 
     yaml, err := mergedConfig.toYaml()
 
@@ -390,16 +370,12 @@ func main() {
 
         return
     }
-    
-    err = CreateDirectoriesForFilePath(target, 0755)
 
-    if err != nil {
+    if CreateDirectoriesForFilePath(target, 0755) != nil {
         fmt.Println("Can not create directories for target file;", err.Error())
     }
 
-    err = os.WriteFile(target, yaml, targetFileMode)
-
-    if err != nil {
+    if os.WriteFile(target, yaml, targetFileMode) != nil {
         fmt.Println("Can not write target file;", err.Error())
     }
 }
