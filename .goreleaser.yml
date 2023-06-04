@@ -4,8 +4,8 @@ before:
 
 builds:
   - id: kube-config-merger
-    main: ./cmd/kube-config-merger
     binary: kube-config-merger
+    main: .
 
     env:
       - CGO_ENABLED=0
