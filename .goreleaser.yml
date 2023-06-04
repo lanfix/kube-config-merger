@@ -45,7 +45,3 @@ archives:
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
-
-release:
-  extra_files:
-    - glob: ./kube-config-merger
