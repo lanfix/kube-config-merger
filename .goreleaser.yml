@@ -22,12 +22,9 @@ builds:
       - ppc64le
       - s390x
 
-    goarm:
-      - 6
-      - 7
-
 archives:
   - id: kube-config-merger-archive
+    rlcp: true
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
