@@ -281,15 +281,43 @@ func (configGroup *ConfigGroup) toYaml() ([]byte, error) {
     return yaml.Marshal(&configYamlStructure)
 }
 
+func CreateDirectoriesForFilePath(filePath string, permissions os.FileMode) error {
+    dirPath := filepath.Dir(filePath)
+
+    if _, err := os.Stat(dirPath); err == nil {
+        return nil
+    }
+
+    return os.MkdirAll(dirPath, permissions)
+}
+
+func GetDefaultTarget() (string, error) {
+    userHomeDir, err := os.UserHomeDir()
+
+    if err != nil {
+        return "", err
+    }
+
+    return fmt.Sprintf("%s/.kube/config", userHomeDir), nil
+}
+
 func main() {
     var directories ArrayFlags
     var files ArrayFlags
     var target string
 
+    defaultTargetPath, err := GetDefaultTarget()
+
+    if err != nil {
+        fmt.Println(err.Error())
+
+        return
+    }
+
     varbose := flag.Bool("v", false, "Show verbose output of command")
     flag.Var(&directories, "directory", "Specify the directory where configs will be searched")
     flag.Var(&files, "file", "Specify the path to concrete config file")
-    flag.StringVar(&target, "target", "~/.kube/config", "Specify the path to the file to merge all the contents there")
+    flag.StringVar(&target, "target", defaultTargetPath, "Specify the path to the file to merge all the contents there")
     flag.Parse()
 
     if len(directories) == 0 {
@@ -362,10 +390,16 @@ func main() {
 
         return
     }
+    
+    err = CreateDirectoriesForFilePath(target, 0755)
+
+    if err != nil {
+        fmt.Println("Can not create directories for target file;", err.Error())
+    }
 
     err = os.WriteFile(target, yaml, targetFileMode)
 
     if err != nil {
-        fmt.Println("Can not write target file")
+        fmt.Println("Can not write target file;", err.Error())
     }
 }
