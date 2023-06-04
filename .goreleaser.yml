@@ -1,0 +1,59 @@
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: kube-config-merger
+    main: ./cmd/kube-config-merger
+    binary: kube-config-merger
+
+    env:
+      - CGO_ENABLED=0
+
+    goos:
+      - linux
+      - darwin
+      - windows
+
+    goarch:
+      - amd64
+      - arm
+      - arm64
+      - ppc64le
+      - s390x
+
+    goarm:
+      - 6
+      - 7
+
+archives:
+  - id: kube-config-merger-archive
+    name_template: |-
+      kube-config-merger_{{ .Tag }}_{{ .Os }}_{{ .Arch -}}
+      {{- with .Arm -}}
+        {{- if (eq . "6") -}}hf
+        {{- else -}}v{{- . -}}
+        {{- end -}}
+      {{- end -}}
+    
+    builds:
+      - kube-config-merger
+    
+    replacements:
+      386: i386
+      amd64: x86_64
+    
+    format_overrides:
+      - goos: windows
+        format: zip
+    
+    files:
+      - "LICENSE"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  extra_files:
+    - glob: ./kube-config-merger
